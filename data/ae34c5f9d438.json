@@ -1,0 +1,80 @@
+{
+  "id": "ae34c5f9d438",
+  "title": "未命名剧情",
+  "description": "",
+  "startScene": "a",
+  "variables": [
+    {
+      "name": "k",
+      "description": ""
+    }
+  ],
+  "scenes": [
+    {
+      "id": "a",
+      "title": "",
+      "text": "",
+      "precondition": "",
+      "assigns": [],
+      "options": [
+        {
+          "uid": "opt-3b98b3e532254afc",
+          "text": "进循环",
+          "condition": "",
+          "target": "loop",
+          "weight": 1,
+          "assigns": []
+        },
+        {
+          "uid": "opt-b5b9027a55b54bc2",
+          "text": "结局",
+          "condition": "",
+          "target": "end",
+          "weight": 1,
+          "assigns": []
+        }
+      ]
+    },
+    {
+      "id": "loop",
+      "title": "",
+      "text": "",
+      "precondition": "",
+      "assigns": [],
+      "options": [
+        {
+          "uid": "opt-c1583e476e0c4ba2",
+          "text": "打转并置 k",
+          "condition": "!k",
+          "target": "loop",
+          "weight": 1,
+          "assigns": [
+            {
+              "variable": "k",
+              "value": true
+            }
+          ]
+        },
+        {
+          "uid": "opt-168e9fd957edf6d7",
+          "text": "永远打转",
+          "condition": "k",
+          "target": "loop",
+          "weight": 1,
+          "assigns": []
+        }
+      ]
+    },
+    {
+      "id": "end",
+      "title": "",
+      "text": "",
+      "precondition": "",
+      "assigns": [],
+      "options": []
+    }
+  ],
+  "baseline": null,
+  "createdAt": "2026-09-20T10:47:36.012Z",
+  "updatedAt": "2026-09-20T10:47:36.012Z"
+}

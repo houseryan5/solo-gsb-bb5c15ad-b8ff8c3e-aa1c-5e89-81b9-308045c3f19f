@@ -114,6 +114,8 @@ npm start
 
 - 场景 `assigns`：**进入场景时** 执行的赋值（包括从起点进入）；
 - 选项 `assigns`：选择该选项时执行的赋值，随后再执行目标场景的进入赋值；
+- 选项 `weight`：**正整数权重**（结局概率推演用），缺省 / `null` / 空串视为 `1`；
+  0、负数、小数、布尔值、非数字字符串或超过 10⁹ 均为非法权重，保存与推演都会返回 400 校验错误（信息带场景 ID 与选项序号）；
 - 选项 `uid`：可选的稳定身份标识，基线对比用它识别“同一条选项”（不随选项拖动重排而变）；留空时保存会自动生成；
 - 顶层 `baseline`：分析基线快照（由「保存分析基线」生成，也可随导入 JSON 携带，无效快照会被忽略）；
 - 起点场景的初始变量状态 = 全部为 `false` 再叠加起点场景自身的进入赋值。
@@ -170,6 +172,23 @@ npm start
 
 响应要点：`found`（是否命中）、`depth`（选项链长度）、`path`（场景/选项交替的每步状态，必经边带 `requiredOrder`）、`finalState`、`requiredOptions` / `disabledOptions`（回显的选项明细）、`unfinishedRequiredOptions`（未完成必经项）、`completedRequiredCount`；无解时 `closest`（差异最少状态、缺失变量 `missing`、未完成必经项 `unfinishedRequiredOptions`、差异数 `mismatchCount`、最近路径 `path`）、`canAssertUnsolvable`、`truncated`、`statesExplored`。
 
+## 结局概率推演
+
+每个选项可填写一个**正整数权重**（留空为 1）。右栏「结局概率推演」点击「开始推演」后，后端在**编辑中的草稿**上展开与分析器同款的「场景 + 完整变量状态」有限具体状态图，并给出稳态精确解：
+
+1. **每个具体状态**下，只有「显示条件成立 **且** 目标场景存在 **且** 跳转后目标场景前置条件成立」的选项可进入；这些选项按权重归一化（`权重 / Σ可选权重`）得到选择概率。条件不成立、悬空跳转、入口前置冲突的选项**不参与归一化、不占概率质量**（结果中以警告逐项列出）；
+2. **没有任何可进入选项**的具体状态是**终止场景**（吸收态）；同一场景的多个终止具体状态（变量取值不同）聚合成一个结局概率；
+3. 其余状态构成有限马尔可夫链。后端先用 Kosaraju 求强连通分量（SCC）：**没有任何出边离开自身的非平凡 SCC 是永久循环陷阱**——一旦进入就永远出不来；
+4. 删除陷阱 SCC 的内部状态后，剩余状态必然都能在有限步内到达吸收态，`(I − Q)` 可逆；对线性方程组 `(I − Q)·X = B` 做高斯-若尔当消元，一次性解出**每个终止场景的最终到达概率**与**进入每个循环陷阱的概率**。
+
+右栏展示：枚举状态数、**结局概率合计**、**永远困在循环中的概率质量**、概率合计（结局 + 循环，应为 1）、概率分布条、各终止场景概率（含终止状态数）、每个永久循环的概率与**涉及的循环场景 / 循环跳转边**，以及推演时忽略的选项警告。
+
+**关于循环（为什么不能用固定步数截断）**：像「轮盘：1/2 赢、1/2 再来」这类**可逃逸循环**，玩家理论上可能停留任意多步，但最终赢的概率极限恰为 1——若按固定走 N 步截断，会把 `(1/2)^N` 的质量错误算成“还在循环”。本实现求解的是方程组的稳态精确解，可逃逸循环不会产生循环质量；只有真正封闭的 SCC 才会计入“永远困住”。为保证服务终止性仍设有两个安全上限（BFS 约 100 万具体状态、线性方程组 500 个瞬态状态）；一旦超限，结果明确标记 `solved=false`（`reason: stateLimit / solverLimit`）并说明**拒绝给出可能失真的概率**，绝不以截断结果冒充精确解。
+
+非法权重（非正整数等）与条件语法错误返回 **400** 并定位到「场景 ID + 选项序号」；起点缺失 / 不存在同样 400；起点前置条件不成立时返回 `startBlocked: true`（剧情无法开始，没有任何概率质量）。
+
+`POST /api/simulate` 响应要点：`solved`、`reason`、`truncated`、`stateCount`、`endings: [{ sceneId, title, probability, terminalStateCount, terminalStates }]`、`loops: [{ id, probability, scenes: [{sceneId,title,stateCount}], stateCount, edges }]`、`trappedProbability`、`totalAccounted`、`warnings`、`message`。权重随剧情 JSON 一起**保存与导入导出**（规整化后的每个选项都带 `weight` 字段，默认 1）。
+
 ## HTTP API
 
 | 方法 | 路径 | 说明 |
@@ -183,6 +202,8 @@ npm start
 | `GET` | `/api/stories/:id/analysis` | 分析已保存的剧情 |
 | `POST` | `/api/pathquery` | 目标路径查询：对请求体中的草稿剧情直接查询（不落盘），请求体 `{ story, query }` |
 | `POST` | `/api/stories/:id/pathquery` | 对已保存剧情做目标路径查询，请求体即 `query` |
+| `POST` | `/api/simulate` | 结局概率推演：对请求体中的草稿剧情直接推演（不落盘），请求体 `{ story }`（也接受裸剧情体） |
+| `POST` | `/api/stories/:id/simulate` | 对已保存剧情做结局概率推演 |
 | `POST` | `/api/stories/:id/baseline` | 把请求体中的剧情分析结果保存为基线（同时落盘剧情），返回 `{ story, baseline, analysis }` |
 | `POST` | `/api/stories/:id/baseline/compare` | 基线对比；请求体可省略（对比已保存剧情）或传入编辑中的草稿，返回 `{ summary, items }` |
 | `DELETE` | `/api/stories/:id/baseline` | 删除基线（剧情内容不变） |
@@ -207,14 +228,16 @@ npm start
 
 ```
 .
-├── server.js              # Express 入口与 REST API（含基线、目标路径查询接口）
+├── server.js              # Express 入口与 REST API（含基线、目标路径查询、结局概率推演接口）
 ├── src/
 │   ├── expression.js      # 布尔表达式递归下降解析器 / 求值 / 失败解释
 │   ├── analyzer.js        # 「场景+状态」BFS 传播去重分析引擎（附带问题指纹）
 │   ├── pathquery.js       # 目标路径查询：必经序号+场景+状态 BFS 求最短链 / 差异最少状态
+│   ├── probability.js     # 结局概率推演：SCC 分类 + (I−Q) 线性方程组求精确吸收概率
+│   ├── weights.js         # 选项正整数权重解析 / 校验
 │   ├── fingerprint.js     # 不依赖数组顺序的问题稳定指纹
 │   ├── baseline.js        # 基线快照构建与新增/已修复/仍存在/详情变化对比
-│   └── storage.js         # JSON 文件存储、首启播种、选项 UID 与基线持久化
+│   └── storage.js         # JSON 文件存储、首启播种、选项 UID / 权重与基线持久化
 ├── public/                # 原生 HTML / CSS / JavaScript 前端（无构建步骤）
 │   ├── index.html
 │   ├── styles.css
@@ -226,6 +249,7 @@ npm start
 │   ├── smoke.js           # 分析引擎自检（node test/smoke.js）
 │   ├── baseline.js        # 指纹 / 基线对比 / 持久化自检（node test/baseline.js）
 │   ├── pathquery.js       # 目标路径查询与 API 自检（node test/pathquery.js）
+│   ├── probability.js     # 结局概率推演核心算法与 API 自检（node test/probability.js）
 │   └── healthcheck.js     # 健康检查探针回归测试（node test/healthcheck.js）
 ├── Dockerfile
 └── docker-compose.yml
@@ -234,7 +258,7 @@ npm start
 自检：
 
 ```bash
-npm test          # 依次运行 smoke.js、baseline.js、pathquery.js 与 healthcheck.js
+npm test          # 依次运行 smoke.js、baseline.js、pathquery.js、probability.js 与 healthcheck.js
 ```
 
 ## 技术栈

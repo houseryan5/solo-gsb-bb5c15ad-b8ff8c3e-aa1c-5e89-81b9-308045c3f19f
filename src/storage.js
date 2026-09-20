@@ -8,6 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { parseOptionWeight, validateStoryWeights } = require('./weights');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const SAMPLES_DIR = process.env.SAMPLES_DIR || path.join(__dirname, '..', 'samples');
@@ -132,8 +133,14 @@ function deleteStory(id) {
   fs.unlinkSync(p);
 }
 
-/** 规整化：只保留受支持的字段，补齐结构，避免脏数据写入 */
+/**
+ * 规整化：只保留受支持的字段，补齐结构，避免脏数据写入。
+ * 非法选项权重（非正整数等）抛 400，由 API 错误处理转成明确校验错误。
+ */
 function normalize(input) {
+  // 先统一校验权重（错误信息带场景 ID / 选项序号），避免逐条写入时信息不全
+  validateStoryWeights(input);
+
   const variables = (input.variables || []).map((v) => {
     if (typeof v === 'string') return { name: v, description: '' };
     return { name: String(v.name || '').trim(), description: v.description || '' };
@@ -170,6 +177,8 @@ function normalize(input) {
       text: o.text || '',
       condition: o.condition || '',
       target: (o.target || '').trim(),
+      // 权重缺省 / 空串 => 1；前面已统一校验，此处解析必合法
+      weight: parseOptionWeight(o.weight),
       assigns: normAssigns(o.assigns),
     })),
   }));

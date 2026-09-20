@@ -15,8 +15,8 @@
       "precondition": "",
       "assigns": [],
       "options": [
-        { "text": "走进黑暗森林", "condition": "", "target": "forest", "assigns": [] },
-        { "text": "沿官道前往国王城堡", "condition": "", "target": "castle", "assigns": [] }
+        { "text": "走进黑暗森林", "condition": "", "weight": 1, "target": "forest", "assigns": [] },
+        { "text": "沿官道前往国王城堡", "condition": "", "weight": 2, "target": "castle", "assigns": [] }
       ]
     },
     {

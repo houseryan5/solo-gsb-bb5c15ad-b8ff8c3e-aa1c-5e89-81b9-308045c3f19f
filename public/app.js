@@ -18,6 +18,8 @@ const state = {
   pathQueryResult: null,  // 最近一次路径查询结果
   pathQueryStale: false,  // 查询之后剧情或查询条件又被修改过
   _pqSig: null,           // 查询面板场景/变量签名（避免每次编辑都重建下拉框）
+  simResult: null,        // 最近一次结局概率推演结果
+  simStale: false,        // 推演之后剧情又被修改过
   dirty: false,
   saving: false,
 };
@@ -75,6 +77,8 @@ async function openStory(id) {
   state.pathQueryResult = null;
   state.pathQueryStale = false;
   state._pqSig = null;
+  state.simResult = null;
+  state.simStale = false;
   $('storySelect').value = id;
   renderAll();
   await runAnalysis(false);
@@ -136,6 +140,8 @@ async function deleteStory() {
   state.pathQueryResult = null;
   state.pathQueryStale = false;
   state._pqSig = null;
+  state.simResult = null;
+  state.simStale = false;
   const next = await loadList();
   if (next) await openStory(next);
   else { renderAll(); toast('已删除'); }
@@ -180,6 +186,7 @@ function renderAll() {
   renderSaveStatus();
   renderAnalysis();
   renderPathQueryPanel();
+  renderProbPanel();
   renderDetail(null);
 }
 
@@ -363,6 +370,7 @@ function renderOptions(sc) {
       <div class="option-grid">
         <label class="field full"><span>显示条件（留空恒真）</span><input type="text" class="opt-cond" spellcheck="false" placeholder="如 hasKey && !witchHelp" /></label>
         <label class="field"><span>跳转目标</span><select class="opt-target"></select></label>
+        <label class="field opt-weight-field"><span>权重（正整数，留空=1）</span><input type="number" class="opt-weight" min="1" step="1" placeholder="1" spellcheck="false" /></label>
         <div class="field">
           <span>选择时赋值</span>
           <div class="assign-list opt-assigns"></div>
@@ -374,8 +382,10 @@ function renderOptions(sc) {
     const text = card.querySelector('.opt-text');
     const cond = card.querySelector('.opt-cond');
     const target = card.querySelector('.opt-target');
+    const weight = card.querySelector('.opt-weight');
     text.value = opt.text || '';
     cond.value = opt.condition || '';
+    weight.value = opt.weight && opt.weight !== 1 ? String(opt.weight) : '';
 
     target.innerHTML = '<option value="">（不跳转 / 悬空）</option>' +
       state.story.scenes.map((s) => `<option value="${s.id}">${s.id}${s.title ? ' — ' + s.title : ''}</option>`).join('');
@@ -384,6 +394,21 @@ function renderOptions(sc) {
     text.addEventListener('input', () => { opt.text = text.value; markDirty(); });
     cond.addEventListener('input', () => { opt.condition = cond.value; markDirty(); });
     target.addEventListener('change', () => { opt.target = target.value; markDirty(); });
+    weight.addEventListener('input', () => {
+      const raw = weight.value.trim();
+      delete opt.weight;
+      weight.classList.remove('invalid');
+      if (raw === '') { markDirty(); return; } // 留空 => 默认权重 1
+      if (!/^\d+$/.test(raw) || Number(raw) < 1) {
+        weight.classList.add('invalid');
+        weight.title = '权重必须是 ≥1 的正整数';
+        markSimStale();
+        return;
+      }
+      weight.title = '';
+      opt.weight = Number(raw);
+      markDirty();
+    });
     card.querySelector('.opt-remove').addEventListener('click', () => {
       sc.options.splice(i, 1);
       markDirty(() => renderEditor());
@@ -461,7 +486,7 @@ function bindEditorEvents() {
 
   $('btnAddOption').addEventListener('click', () => {
     // 预分配稳定 UID：编辑器中的新选项也能立刻用于路径查询的必经 / 禁用选择
-    currentScene().options.push({ uid: genOptionUid(), text: '新选项', condition: '', target: '', assigns: [] });
+    currentScene().options.push({ uid: genOptionUid(), text: '新选项', condition: '', weight: 1, target: '', assigns: [] });
     markDirty(() => renderEditor());
   });
 
@@ -481,10 +506,12 @@ function markDirty(rerender) {
   state.dirty = true;
   if (state.diff) state.diffStale = true;
   markPathQueryStale();
+  markSimStale();
   renderSaveStatus();
   if (rerender) rerender();
   else renderAnalysis();
   renderPathQueryPanel(); // 内部有签名缓存，场景/变量未变时仅刷新过期提示与结果
+  renderProbPanel();
   clearTimeout(reanalyzeTimer);
   reanalyzeTimer = setTimeout(() => runAnalysis(true), 500);
 }
@@ -976,6 +1003,216 @@ function renderPathQueryResult() {
 }
 
 
+/* ============================================================
+ * 结局概率推演
+ * ============================================================ */
+function markSimStale() {
+  if (!state.simResult) return;
+  state.simStale = true;
+  const el = $('probStale');
+  if (el) el.hidden = false;
+}
+
+function renderProbPanel() {
+  const card = $('probCard');
+  if (!state.story) { card.hidden = true; return; }
+  card.hidden = false;
+  $('probStale').hidden = !state.simStale;
+  renderProbResult();
+}
+
+function fmtProb(p) {
+  const pct = (p * 100).toFixed(2).replace(/\.?0+$/, '');
+  return `${pct}%`;
+}
+
+async function runSimulation() {
+  if (!state.story) return;
+  // 客户端兜底校验：权重必须是正整数
+  for (const sc of state.story.scenes) {
+    for (let i = 0; i < (sc.options || []).length; i++) {
+      const w = sc.options[i].weight;
+      if (w !== undefined && (!Number.isInteger(w) || w < 1)) {
+        return toast(`场景「${sc.id}」选项 ${i + 1} 的权重非法：权重必须是 ≥1 的正整数`);
+      }
+    }
+  }
+  const btn = $('btnRunSim');
+  btn.disabled = true;
+  try {
+    const result = await api('POST', '/api/simulate', { story: state.story });
+    state.simResult = result;
+    state.simStale = false;
+    renderProbPanel();
+  } catch (e) {
+    state.simResult = { error: e.message };
+    renderProbPanel();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderProbResult() {
+  const box = $('probResult');
+  box.innerHTML = '';
+  const r = state.simResult;
+  if (!r || !state.story) return;
+
+  if (r.error) {
+    const banner = document.createElement('div');
+    banner.className = 'pq-banner pq-err';
+    banner.textContent = '✗ 推演失败';
+    box.appendChild(banner);
+    const pre = document.createElement('pre');
+    pre.className = 'prob-error';
+    pre.textContent = r.error;
+    box.appendChild(pre);
+    return;
+  }
+
+  if (!r.solved) {
+    const banner = document.createElement('div');
+    banner.className = 'pq-banner pq-warn';
+    banner.textContent = '⚠ 无法给出精确概率（未使用固定步数截断冒充结果）';
+    box.appendChild(banner);
+    const msg = document.createElement('div');
+    msg.className = 'pq-note';
+    msg.textContent = r.message;
+    box.appendChild(msg);
+    renderProbWarnings(box, r);
+    return;
+  }
+
+  if (r.startBlocked) {
+    const banner = document.createElement('div');
+    banner.className = 'pq-banner pq-err';
+    banner.textContent = '剧情无法开始：起点场景前置条件不成立';
+    box.appendChild(banner);
+    return;
+  }
+
+  // 汇总条：结局质量 / 循环质量
+  const endingMass = r.endings.reduce((s, e) => s + e.probability, 0);
+  const summary = document.createElement('div');
+  summary.className = 'prob-summary';
+  summary.innerHTML = `
+    <div class="prob-stat"><span>枚举具体状态</span><b>${r.stateCount}</b></div>
+    <div class="prob-stat stat-ok"><span>到达结局</span><b title="精确稳态解">${fmtProb(endingMass)}</b></div>
+    <div class="prob-stat ${r.trappedProbability > 0 ? 'stat-bad' : ''}"><span>永远困在循环</span><b>${fmtProb(r.trappedProbability)}</b></div>
+    <div class="prob-stat"><span>概率合计</span><b>${fmtProb(r.totalAccounted)}</b></div>
+  `;
+  box.appendChild(summary);
+
+  // 概率条
+  const bar = document.createElement('div');
+  bar.className = 'prob-bar';
+  const palette = ['#3a7d44', '#2f6f8f', '#8a5a2b', '#6a4c93', '#4a7c59', '#219ebc', '#b5651d', '#588157'];
+  r.endings.forEach((e, i) => {
+    if (e.probability <= 0) return;
+    const seg = document.createElement('div');
+    seg.className = 'prob-seg seg-ending';
+    seg.style.width = `${Math.max(e.probability * 100, 0.5)}%`;
+    seg.style.background = palette[i % palette.length];
+    seg.title = `${e.sceneId}：${fmtProb(e.probability)}`;
+    bar.appendChild(seg);
+  });
+  if (r.trappedProbability > 0) {
+    const seg = document.createElement('div');
+    seg.className = 'prob-seg seg-trapped';
+    seg.style.width = `${Math.max(r.trappedProbability * 100, 0.5)}%`;
+    seg.title = `永久循环：${fmtProb(r.trappedProbability)}`;
+    bar.appendChild(seg);
+  }
+  box.appendChild(bar);
+
+  // 结局概率列表
+  const endingHead = document.createElement('h3');
+  endingHead.className = 'prob-section-title';
+  endingHead.textContent = `终止场景（${r.endings.length}）`;
+  box.appendChild(endingHead);
+  if (!r.endings.length) {
+    const none = document.createElement('div');
+    none.className = 'pq-note';
+    none.textContent = '不存在任何终止场景：起点可达的概率质量将全部困在循环中。';
+    box.appendChild(none);
+  } else {
+    const list = document.createElement('ul');
+    list.className = 'prob-list';
+    const colorOf = new Map(r.endings.map((e, i) => [e, palette[i % palette.length]]));
+    [...r.endings].sort((a, b) => b.probability - a.probability).forEach((e) => {
+      const li = document.createElement('li');
+      li.innerHTML = `<span class="prob-dot" style="background:${colorOf.get(e)}"></span>
+        <span class="prob-name"></span><span class="prob-val"></span>`;
+      li.querySelector('.prob-name').textContent = `${e.sceneId}${e.title ? ' — ' + e.title : ''}` +
+        (e.terminalStateCount > 1 ? `（${e.terminalStateCount} 种终止状态）` : '');
+      li.querySelector('.prob-val').textContent = fmtProb(e.probability);
+      list.appendChild(li);
+    });
+    box.appendChild(list);
+  }
+
+  // 循环概率与涉及场景
+  if (r.loops.length) {
+    const loopHead = document.createElement('h3');
+    loopHead.className = 'prob-section-title';
+    loopHead.textContent = `永久循环（${r.loops.length}，共 ${fmtProb(r.trappedProbability)} 概率质量永远无法到达任何结局）`;
+    box.appendChild(loopHead);
+    const loopBox = document.createElement('div');
+    loopBox.className = 'prob-loops';
+    [...r.loops].sort((a, b) => b.probability - a.probability).forEach((l) => {
+      const card = document.createElement('div');
+      card.className = 'prob-loop';
+      const head = document.createElement('div');
+      head.className = 'prob-loop-head';
+      head.innerHTML = `<b></b><span class="prob-val"></span>`;
+      head.querySelector('b').textContent = `🔁 ${l.scenes.map((s) => s.sceneId).join(' ⇄ ')}`;
+      head.querySelector('.prob-val').textContent = fmtProb(l.probability);
+      card.appendChild(head);
+
+      const scenes = document.createElement('div');
+      scenes.className = 'prob-loop-scenes';
+      scenes.textContent = `涉及场景：${l.scenes.map((s) => `${s.sceneId}${s.title ? '（' + s.title + '）' : ''}`).join('、')}；循环内具体状态 ${l.stateCount} 个`;
+      card.appendChild(scenes);
+
+      const edgeList = document.createElement('ul');
+      edgeList.className = 'prob-loop-edges';
+      l.edges.forEach((ed) => {
+        const li = document.createElement('li');
+        li.textContent = `${ed.sceneId} 选项 ${ed.optionIndex + 1}「${ed.optionText || '（无文案）'}」→ ${ed.target}`;
+        edgeList.appendChild(li);
+      });
+      card.appendChild(edgeList);
+      loopBox.appendChild(card);
+    });
+    box.appendChild(loopBox);
+  } else {
+    const ok = document.createElement('div');
+    ok.className = 'pq-note';
+    ok.textContent = '✓ 不存在永久循环：所有可达概率最终都会到达某个终止场景。';
+    box.appendChild(ok);
+  }
+
+  renderProbWarnings(box, r);
+}
+
+function renderProbWarnings(box, r) {
+  if (!r.warnings || !r.warnings.length) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'prob-warnings';
+  const head = document.createElement('h3');
+  head.className = 'prob-section-title';
+  head.textContent = `推演忽略的选项（${r.warnings.length}）`;
+  wrap.appendChild(head);
+  for (const w of r.warnings) {
+    const div = document.createElement('div');
+    div.className = 'pq-note';
+    div.textContent = w.message;
+    wrap.appendChild(div);
+  }
+  box.appendChild(wrap);
+}
+
+
 function fmtTime(iso) {
   if (!iso) return '';
   const d = new Date(iso);
@@ -1379,6 +1616,7 @@ function bindGlobalEvents() {
   $('btnRunCompare').addEventListener('click', runCompare);
   $('btnClearBaseline').addEventListener('click', clearBaseline);
   $('btnRunPathQuery').addEventListener('click', runPathQuery);
+  $('btnRunSim').addEventListener('click', runSimulation);
   $('btnPqAddConstraint').addEventListener('click', () => {
     if (!state.story) return;
     const firstVar = state.story.variables[0];

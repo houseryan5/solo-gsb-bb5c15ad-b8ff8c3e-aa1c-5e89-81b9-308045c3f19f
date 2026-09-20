@@ -154,6 +154,19 @@
         <div id="pqResult" class="pq-result"></div>
       </section>
 
+      <section id="probCard" class="card query-card" hidden>
+        <div class="card-head">
+          <h2>结局概率推演</h2>
+          <button id="btnRunSim" class="btn btn-small btn-primary">开始推演</button>
+        </div>
+        <div class="prob-hint">
+          对每个选项填写正整数权重（留空为 1）。推演在「场景 + 变量状态」图上求稳态精确解：
+          仅对当前状态下<b>条件成立且目标可进入</b>的选项按权重归一化；无选项可进入的状态为终止场景。
+        </div>
+        <div id="probStale" class="diff-stale" hidden>⚠ 剧情已修改，以下推演结果可能过期，请重新「开始推演」</div>
+        <div id="probResult" class="prob-result"></div>
+      </section>
+
       <section id="detailPanel" class="card detail-card" hidden>
         <div class="card-head">
           <h2 id="detailTitle">问题详情</h2>

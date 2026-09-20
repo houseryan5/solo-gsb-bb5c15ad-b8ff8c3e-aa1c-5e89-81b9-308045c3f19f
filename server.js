@@ -5,6 +5,7 @@ const path = require('path');
 const storage = require('./src/storage');
 const { analyze } = require('./src/analyzer');
 const { queryPath } = require('./src/pathquery');
+const { simulate } = require('./src/probability');
 const { buildBaseline, compareWithBaseline } = require('./src/baseline');
 
 const app = express();
@@ -79,6 +80,23 @@ app.post('/api/stories/:id/pathquery', wrap((req, res) => {
   const body = req.body || {};
   const query = body.query !== undefined ? body.query : body;
   res.json(queryPath(story, query));
+}));
+
+// ---- 结局概率推演：对请求体中的草稿剧情直接推演（不落盘），供编辑页实时使用 ----
+// 请求体：{ story: <剧情> }（也接受直接传剧情本体）
+// 返回各终止场景的最终到达概率、永久循环的概率质量与涉及场景；
+// 非法权重 / 条件语法错误返回 400；状态数或求解规模超上限时 solved=false（绝不以步数截断冒充）。
+app.post('/api/simulate', wrap((req, res) => {
+  const body = req.body || {};
+  const story = body.story !== undefined ? body.story : body;
+  res.json(simulate(story));
+}));
+
+// ---- 对已保存的剧情做结局概率推演 ----
+app.post('/api/stories/:id/simulate', wrap((req, res) => {
+  const story = storage.getStory(req.params.id);
+  if (!story) return res.status(404).json({ error: '剧情不存在' });
+  res.json(simulate(story));
 }));
 
 // ---- 分析基线：把当前（通常是编辑中的）分析结果保存为基线，随剧情 JSON 持久化 ----
