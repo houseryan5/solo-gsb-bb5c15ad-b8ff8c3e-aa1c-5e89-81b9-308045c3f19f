@@ -18,6 +18,8 @@ const state = {
   pathQueryResult: null,  // 最近一次路径查询结果
   pathQueryStale: false,  // 查询之后剧情或查询条件又被修改过
   _pqSig: null,           // 查询面板场景/变量签名（避免每次编辑都重建下拉框）
+  probResult: null,       // 最近一次结局概率推演结果
+  probStale: false,       // 推演之后剧情又被编辑过
   dirty: false,
   saving: false,
 };
@@ -75,6 +77,8 @@ async function openStory(id) {
   state.pathQueryResult = null;
   state.pathQueryStale = false;
   state._pqSig = null;
+  state.probResult = null;
+  state.probStale = false;
   $('storySelect').value = id;
   renderAll();
   await runAnalysis(false);
@@ -136,6 +140,8 @@ async function deleteStory() {
   state.pathQueryResult = null;
   state.pathQueryStale = false;
   state._pqSig = null;
+  state.probResult = null;
+  state.probStale = false;
   const next = await loadList();
   if (next) await openStory(next);
   else { renderAll(); toast('已删除'); }
@@ -180,6 +186,7 @@ function renderAll() {
   renderSaveStatus();
   renderAnalysis();
   renderPathQueryPanel();
+  renderProbabilityPanel();
   renderDetail(null);
 }
 
@@ -363,7 +370,8 @@ function renderOptions(sc) {
       <div class="option-grid">
         <label class="field full"><span>显示条件（留空恒真）</span><input type="text" class="opt-cond" spellcheck="false" placeholder="如 hasKey && !witchHelp" /></label>
         <label class="field"><span>跳转目标</span><select class="opt-target"></select></label>
-        <div class="field">
+        <label class="field opt-weight-field"><span>权重</span><input type="number" class="opt-weight" min="1" step="1" title="结局概率推演用的正整数权重：同一状态下，可走的选项按权重占比被选中；缺省为 1" /></label>
+        <div class="field full">
           <span>选择时赋值</span>
           <div class="assign-list opt-assigns"></div>
           <button class="btn btn-small btn-add-assign">＋ 赋值</button>
@@ -374,8 +382,10 @@ function renderOptions(sc) {
     const text = card.querySelector('.opt-text');
     const cond = card.querySelector('.opt-cond');
     const target = card.querySelector('.opt-target');
+    const weight = card.querySelector('.opt-weight');
     text.value = opt.text || '';
     cond.value = opt.condition || '';
+    weight.value = opt.weight === undefined ? 1 : opt.weight;
 
     target.innerHTML = '<option value="">（不跳转 / 悬空）</option>' +
       state.story.scenes.map((s) => `<option value="${s.id}">${s.id}${s.title ? ' — ' + s.title : ''}</option>`).join('');
@@ -384,6 +394,18 @@ function renderOptions(sc) {
     text.addEventListener('input', () => { opt.text = text.value; markDirty(); });
     cond.addEventListener('input', () => { opt.condition = cond.value; markDirty(); });
     target.addEventListener('change', () => { opt.target = target.value; markDirty(); });
+    weight.addEventListener('change', () => {
+      const v = Number(weight.value);
+      if (!Number.isInteger(v) || v < 1) {
+        toast('权重必须是正整数（1、2、3…）');
+        weight.value = opt.weight === undefined ? 1 : opt.weight;
+        return;
+      }
+      if (v === 1) delete opt.weight; // 缺省即 1，不写入 JSON
+      else opt.weight = v;
+      weight.value = v;
+      markDirty();
+    });
     card.querySelector('.opt-remove').addEventListener('click', () => {
       sc.options.splice(i, 1);
       markDirty(() => renderEditor());
@@ -481,10 +503,12 @@ function markDirty(rerender) {
   state.dirty = true;
   if (state.diff) state.diffStale = true;
   markPathQueryStale();
+  markProbabilityStale();
   renderSaveStatus();
   if (rerender) rerender();
   else renderAnalysis();
   renderPathQueryPanel(); // 内部有签名缓存，场景/变量未变时仅刷新过期提示与结果
+  renderProbabilityPanel(); // 仅刷新过期提示与已展示的结果，不重新推演
   clearTimeout(reanalyzeTimer);
   reanalyzeTimer = setTimeout(() => runAnalysis(true), 500);
 }
@@ -975,6 +999,144 @@ function renderPathQueryResult() {
   box.appendChild(buildQueryPathView(c.path, r.knownVars, false));
 }
 
+/* ============================================================
+ * 结局概率推演
+ * ============================================================ */
+function markProbabilityStale() {
+  if (!state.probResult) return;
+  state.probStale = true;
+  const el = $('probStale');
+  if (el) el.hidden = false;
+}
+
+async function runProbability() {
+  if (!state.story) return;
+  try {
+    // 对编辑中的草稿直接推演（不落盘）
+    state.probResult = await api('POST', '/api/probability', state.story);
+    state.probStale = false;
+    renderProbabilityPanel();
+  } catch (e) {
+    toast(`推演失败：${e.message}`);
+  }
+}
+
+function renderProbabilityPanel() {
+  const card = $('probCard');
+  if (!state.story) { card.hidden = true; return; }
+  card.hidden = false;
+  $('probStale').hidden = !state.probStale;
+  renderProbabilityResult();
+}
+
+function fmtPct(p) {
+  return `${(p * 100).toFixed(1)}%`;
+}
+
+/** 单条概率行：名称 + 百分比 + 概率条 */
+function buildProbRow(nameHtml, pct, barCls) {
+  const row = document.createElement('div');
+  row.className = 'prob-row';
+  row.innerHTML = `
+    <div class="prob-row-head">
+      <span class="prob-name"></span>
+      <span class="prob-pct">${fmtPct(pct)}</span>
+    </div>
+    <div class="prob-bar"><div class="prob-bar-fill ${barCls}" style="width:${Math.min(100, Math.max(0, pct * 100))}%"></div></div>
+  `;
+  row.querySelector('.prob-name').innerHTML = nameHtml;
+  return row;
+}
+
+function renderProbabilityResult() {
+  const box = $('probResult');
+  box.innerHTML = '';
+  const r = state.probResult;
+  if (!r || !state.story) return;
+
+  const banner = document.createElement('div');
+
+  if (r.startBlocked) {
+    banner.className = 'pq-banner pq-err';
+    banner.textContent = '✗ 起点场景的前置条件在初始状态下不成立，剧情无法开始，没有可推演的概率。';
+    box.appendChild(banner);
+    return;
+  }
+
+  if (!r.ok) {
+    banner.className = 'pq-banner pq-warn';
+    banner.textContent = `⚠ ${r.message}`;
+    box.appendChild(banner);
+    return;
+  }
+
+  banner.className = 'pq-banner pq-ok';
+  banner.textContent = `✓ ${r.message}`;
+  box.appendChild(banner);
+
+  if (r.conditionErrors && r.conditionErrors.length) {
+    const note = document.createElement('div');
+    note.className = 'pq-note';
+    note.textContent = `剧情中存在 ${r.conditionErrors.length} 处条件语法错误，本次推演按恒真处理（详见一致性分析）。`;
+    box.appendChild(note);
+  }
+
+  // 终止场景（设计结局 / 死局）
+  const endLabel = document.createElement('div');
+  endLabel.className = 'prob-section-label';
+  endLabel.textContent = `终止场景（合计 ${fmtPct(r.totalEndingProbability)}）`;
+  box.appendChild(endLabel);
+
+  if (!r.endings.length) {
+    const none = document.createElement('div');
+    none.className = 'pq-note';
+    none.textContent = '没有任何可到达的终止场景——全部概率质量都困在循环中。';
+    box.appendChild(none);
+  } else {
+    for (const e of r.endings) {
+      const kindBadge = e.kind === 'ending'
+        ? '<span class="badge badge-ok">结局</span>'
+        : '<span class="badge badge-warn">死局</span>';
+      const statesTxt = e.states > 1 ? `（${e.states} 个状态）` : '';
+      const row = buildProbRow(
+        `${kindBadge}<span class="prob-title"></span><code class="prob-id"></code><span class="prob-states">${statesTxt}</span>`,
+        e.probability,
+        e.kind === 'ending' ? 'fill-ok' : 'fill-warn');
+      row.querySelector('.prob-title').textContent = e.title || e.sceneId;
+      row.querySelector('.prob-id').textContent = e.sceneId;
+      if (e.kind === 'deadend') {
+        row.title = '该场景存在没有任何可走选项的状态（选项条件不成立 / 目标不可进入），玩家会卡死在这里';
+      }
+      box.appendChild(row);
+    }
+  }
+
+  // 永远困在循环中的概率质量
+  const loopLabel = document.createElement('div');
+  const loopLabelText = `永远困在循环中（合计 ${fmtPct(r.loopProbability)}）`;
+  loopLabel.className = 'prob-section-label';
+  loopLabel.textContent = loopLabelText;
+  box.appendChild(loopLabel);
+
+  if (!r.loops.length) {
+    const none = document.createElement('div');
+    none.className = 'pq-note';
+    none.textContent = '不存在陷阱循环：从起点出发，概率 1 最终到达某个终止场景。';
+    box.appendChild(none);
+  } else {
+    for (const loop of r.loops) {
+      const row = buildProbRow(
+        `<span class="badge badge-err">循环</span><span class="prob-loop-scenes"></span><span class="prob-states">（${loop.states} 个状态）</span>`,
+        loop.probability,
+        'fill-err');
+      const scenesBox = row.querySelector('.prob-loop-scenes');
+      scenesBox.textContent = loop.scenes.map((s) => `${s.title || s.id}(${s.id})`).join(' ⇄ ');
+      row.title = '进入这组场景状态后没有任何出路，这部分概率质量永远困在循环里';
+      box.appendChild(row);
+    }
+  }
+}
+
 
 function fmtTime(iso) {
   if (!iso) return '';
@@ -1374,6 +1536,7 @@ function bindGlobalEvents() {
     e.target.value = '';
   });
   $('btnAnalyze').addEventListener('click', () => runAnalysis(state.dirty));
+  $('btnRunProb').addEventListener('click', runProbability);
   $('btnCloseDetail').addEventListener('click', () => $('detailPanel').hidden = true);
   $('btnSaveBaseline').addEventListener('click', saveBaseline);
   $('btnRunCompare').addEventListener('click', runCompare);

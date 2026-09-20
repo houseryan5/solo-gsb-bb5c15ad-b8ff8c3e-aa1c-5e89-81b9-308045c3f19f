@@ -1,7 +1,7 @@
 {
   "id": "adventure-demo",
   "title": "失落王权（示例·含各类缺陷）",
-  "description": "一个教学用示例剧情，刻意包含：森林/村庄循环、城堡/女巫塔循环（验证含循环分析可终止）、不可达场景（地下地牢）、条件永不成立的选项（强行闯门，gateOpen 从未赋值）、悬空跳转（远古巨龙）、以及进入目标时前置条件恒不成立的侧门选项。",
+  "description": "一个教学用示例剧情，刻意包含：森林/村庄循环、城堡/女巫塔循环（验证含循环分析可终止）、不可达场景（地下地牢）、条件永不成立的选项（强行闯门，gateOpen 从未赋值）、悬空跳转（远古巨龙）、以及进入目标时前置条件恒不成立的侧门选项。选项带有正整数权重，可直接在右栏「结局概率推演」中查看各结局的到达概率与困在循环中的概率。",
   "startScene": "village",
   "variables": [
     { "name": "hasKey", "description": "是否持有古老钥匙" },
@@ -15,8 +15,8 @@
       "precondition": "",
       "assigns": [],
       "options": [
-        { "text": "走进黑暗森林", "condition": "", "target": "forest", "assigns": [] },
-        { "text": "沿官道前往国王城堡", "condition": "", "target": "castle", "assigns": [] }
+        { "text": "走进黑暗森林", "condition": "", "target": "forest", "weight": 3, "assigns": [] },
+        { "text": "沿官道前往国王城堡", "condition": "", "target": "castle", "weight": 2, "assigns": [] }
       ]
     },
     {
@@ -26,9 +26,9 @@
       "precondition": "",
       "assigns": [],
       "options": [
-        { "text": "在古树洞中寻找古老钥匙", "condition": "!hasKey", "target": "forest", "assigns": [{ "variable": "hasKey", "value": true }] },
-        { "text": "再检查一遍树洞", "condition": "hasKey", "target": "forest", "assigns": [] },
-        { "text": "返回村庄", "condition": "", "target": "village", "assigns": [] }
+        { "text": "在古树洞中寻找古老钥匙", "condition": "!hasKey", "target": "forest", "weight": 2, "assigns": [{ "variable": "hasKey", "value": true }] },
+        { "text": "再检查一遍树洞", "condition": "hasKey", "target": "forest", "weight": 1, "assigns": [] },
+        { "text": "返回村庄", "condition": "", "target": "village", "weight": 2, "assigns": [] }
       ]
     },
     {
@@ -38,10 +38,10 @@
       "precondition": "",
       "assigns": [],
       "options": [
-        { "text": "强行撞开城门", "condition": "gateOpen", "target": "throneRoom", "assigns": [] },
-        { "text": "出示古老钥匙", "condition": "hasKey", "target": "throneRoom", "assigns": [] },
-        { "text": "前往女巫之塔寻求帮助", "condition": "!witchHelp", "target": "witchTower", "assigns": [] },
-        { "text": "从侧门溜进宝库", "condition": "", "target": "treasureRoom", "assigns": [{ "variable": "witchHelp", "value": false }] }
+        { "text": "强行撞开城门", "condition": "gateOpen", "target": "throneRoom", "weight": 1, "assigns": [] },
+        { "text": "出示古老钥匙", "condition": "hasKey", "target": "throneRoom", "weight": 3, "assigns": [] },
+        { "text": "前往女巫之塔寻求帮助", "condition": "!witchHelp", "target": "witchTower", "weight": 2, "assigns": [] },
+        { "text": "从侧门溜进宝库", "condition": "", "target": "treasureRoom", "weight": 1, "assigns": [{ "variable": "witchHelp", "value": false }] }
       ]
     },
     {

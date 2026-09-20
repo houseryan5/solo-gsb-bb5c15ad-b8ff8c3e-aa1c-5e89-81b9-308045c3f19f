@@ -199,9 +199,10 @@ code {
 }
 .option-card .opt-text { flex: 1; }
 .option-card .opt-remove { border: none; background: none; color: var(--danger); cursor: pointer; font-size: 14px; }
-.option-grid { display: grid; grid-template-columns: 1fr 170px; gap: 8px; }
+.option-grid { display: grid; grid-template-columns: 1fr 96px; gap: 8px; }
 .option-grid .full { grid-column: 1 / -1; }
 .opt-status { font-size: 11px; font-weight: 600; }
+.opt-weight-field input { text-align: right; }
 
 /* ---------- 右栏分析 ---------- */
 .analysis-card { max-height: 46%; display: flex; flex-direction: column; }
@@ -392,6 +393,28 @@ code {
   border-radius: 8px; padding: 8px 10px; color: #7a5200; line-height: 1.5;
 }
 .fix-hint b { color: var(--warning); }
+
+/* ---------- 结局概率推演 ---------- */
+.prob-card { max-height: 44%; display: flex; flex-direction: column; }
+.prob-card .prob-result { overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+.prob-hint { font-size: 11.5px; color: var(--muted); line-height: 1.5; margin-bottom: 8px; }
+.prob-section-label { font-size: 12px; font-weight: 700; color: var(--muted); margin-top: 2px; }
+.prob-row {
+  border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px;
+  display: flex; flex-direction: column; gap: 5px; background: #fff;
+}
+.prob-row-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.prob-name { display: flex; align-items: center; gap: 6px; font-size: 12.5px; min-width: 0; flex-wrap: wrap; }
+.prob-name .prob-title { font-weight: 600; }
+.prob-name .prob-id { font-size: 11px; }
+.prob-name .prob-states { font-size: 11px; color: var(--muted); }
+.prob-name .prob-loop-scenes { font-size: 12px; }
+.prob-pct { font-weight: 700; font-size: 13px; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.prob-bar { height: 6px; border-radius: 3px; background: #eef1f6; overflow: hidden; }
+.prob-bar-fill { height: 100%; border-radius: 3px; }
+.prob-bar-fill.fill-ok { background: var(--ok); }
+.prob-bar-fill.fill-warn { background: var(--warning); }
+.prob-bar-fill.fill-err { background: var(--danger); }
 
 /* ---------- Toast ---------- */
 .toast {

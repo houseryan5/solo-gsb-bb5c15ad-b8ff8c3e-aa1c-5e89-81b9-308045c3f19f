@@ -8,6 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { normalizeWeight, weightWhere } = require('./weight');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const SAMPLES_DIR = process.env.SAMPLES_DIR || path.join(__dirname, '..', 'samples');
@@ -165,11 +166,13 @@ function normalize(input) {
     text: s.text || '',
     precondition: s.precondition || '',
     assigns: normAssigns(s.assigns),
-    options: (s.options || []).map((o) => ({
+    options: (s.options || []).map((o, oi) => ({
       uid: collectUid(o.uid),
       text: o.text || '',
       condition: o.condition || '',
       target: (o.target || '').trim(),
+      // 结局概率推演权重：正整数，缺省不落盘（推演时按 1 处理）；非法权重抛出 400
+      weight: normalizeWeight(o.weight, weightWhere(s.id, oi, o.text || '')),
       assigns: normAssigns(o.assigns),
     })),
   }));

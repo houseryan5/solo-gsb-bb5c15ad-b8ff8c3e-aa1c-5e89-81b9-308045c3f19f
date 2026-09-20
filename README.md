@@ -1,6 +1,6 @@
 # 分支剧情一致性审校台（Branching Story Auditor）
 
-一个用于检查 **分支剧情 / 互动叙事脚本一致性** 的 Web 应用。支持为每个场景设置 **布尔前置条件、进入时状态赋值**，为每个选项设置 **显示条件、状态赋值和跳转目标**，并指定剧情起点。后端会从起点出发，按 **「场景 + 变量状态」组合状态** 进行穷举传播与去重，因此即使剧情包含环路（可反复返回的场景），分析也保证终止。
+一个用于检查 **分支剧情 / 互动叙事脚本一致性** 的 Web 应用。支持为每个场景设置 **布尔前置条件、进入时状态赋值**，为每个选项设置 **显示条件、状态赋值、跳转目标和正整数权重**，并指定剧情起点。后端会从起点出发，按 **「场景 + 变量状态」组合状态** 进行穷举传播与去重，因此即使剧情包含环路（可反复返回的场景），分析也保证终止。基于同一状态图，还可以对编辑中的草稿做 **结局概率推演**：精确求解各终止场景的最终到达概率，并单独列出永远困在循环中的概率质量。
 
 ## 能发现什么问题
 
@@ -104,6 +104,7 @@ npm start
           "text": "走进森林",
           "condition": "!hasKey",
           "target": "forest",
+          "weight": 2,
           "assigns": [{ "variable": "hasKey", "value": true }]
         }
       ]
@@ -114,6 +115,7 @@ npm start
 
 - 场景 `assigns`：**进入场景时** 执行的赋值（包括从起点进入）；
 - 选项 `assigns`：选择该选项时执行的赋值，随后再执行目标场景的进入赋值；
+- 选项 `weight`：可选的 **正整数权重**（1、2、3…；缺省视为 1，保存时缺省不落盘该字段），用于「结局概率推演」中同一状态下可走选项的选择占比；0、负数、小数、字符串等非法权重会在 **保存 / 导入 / 推演** 时得到带场景与选项位置的明确校验错误（HTTP 400）；
 - 选项 `uid`：可选的稳定身份标识，基线对比用它识别“同一条选项”（不随选项拖动重排而变）；留空时保存会自动生成；
 - 顶层 `baseline`：分析基线快照（由「保存分析基线」生成，也可随导入 JSON 携带，无效快照会被忽略）；
 - 起点场景的初始变量状态 = 全部为 `false` 再叠加起点场景自身的进入赋值。
@@ -170,6 +172,19 @@ npm start
 
 响应要点：`found`（是否命中）、`depth`（选项链长度）、`path`（场景/选项交替的每步状态，必经边带 `requiredOrder`）、`finalState`、`requiredOptions` / `disabledOptions`（回显的选项明细）、`unfinishedRequiredOptions`（未完成必经项）、`completedRequiredCount`；无解时 `closest`（差异最少状态、缺失变量 `missing`、未完成必经项 `unfinishedRequiredOptions`、差异数 `mismatchCount`、最近路径 `path`）、`canAssertUnsolvable`、`truncated`、`statesExplored`。
 
+## 结局概率推演
+
+编辑页右侧的「结局概率推演」面板回答：**“按选项权重随机游玩，最终到达每个结局的概率各是多少？有多大比例会永远困在循环里？”**
+
+1. 为选项设置 **正整数权重**（编辑器选项卡片中的「权重」输入框，缺省为 1）；权重随剧情 JSON 保存、导入与导出；
+2. 点击「推演结局概率」，后端对 **编辑中的草稿**（不落盘）展开「场景 + 变量状态」图（与分析器相同的 BFS 去重与约 100 万状态上限）；
+3. **每个具体状态下，仅对「条件成立且目标可进入」的选项按权重归一化**：条件不成立、目标场景不存在（悬空跳转）、或应用赋值后目标前置条件不成立的选项不参与归一化；指向同一状态的选项权重合并；
+4. **含环图精确求解，不用固定步数截断冒充结果**：用 Kosaraju 找出全部闭合类（底 SCC），对瞬态子链精确求解线性方程组 `(I − Q)X = B`（高斯消元 + 部分主元，多右端一次解出），得到各终止场景的 **最终到达概率**；状态数超出稠密求解上限时改用 Gauss-Seidel 迭代求解同一方程组，**收敛到容差内才输出**，不收敛则明确报告；
+5. **永远困在循环中的概率质量单独列出**：含内部边的闭合类（陷阱循环）按进入概率汇总，并给出涉及的循环场景；没有任何可走选项的状态是吸收态——场景本身无选项记为 **结局**，有选项但全部不可走记为 **死局**（软锁）；
+6. 状态空间超上限被截断时 **不输出概率**（避免以不完整的状态图冒充结果），只返回明确的截断说明；剧情被继续编辑后，旧结果标记为 **可能过期**，重新推演即可。
+
+响应要点：`endings`（`sceneId` / `title` / `kind`：`ending` 或 `deadend` / `probability` / 吸收态数 `states`，按概率降序）、`totalEndingProbability`、`loopProbability`、`loops`（每个陷阱循环的 `probability`、涉及的 `scenes`、包含的具体状态数 `states`）、`counts`（具体状态数、转移数等）、`solver`（`exact` / `iterative` / `trivial`）、`conditionErrors`（语法错误按恒真处理的计数）。任意一次完整推演都有 `totalEndingProbability + loopProbability = 1`。
+
 ## HTTP API
 
 | 方法 | 路径 | 说明 |
@@ -183,6 +198,8 @@ npm start
 | `GET` | `/api/stories/:id/analysis` | 分析已保存的剧情 |
 | `POST` | `/api/pathquery` | 目标路径查询：对请求体中的草稿剧情直接查询（不落盘），请求体 `{ story, query }` |
 | `POST` | `/api/stories/:id/pathquery` | 对已保存剧情做目标路径查询，请求体即 `query` |
+| `POST` | `/api/probability` | 结局概率推演：对请求体中的草稿剧情直接推演（不落盘），请求体即剧情或 `{ story }`；非法权重返回 400 |
+| `GET` | `/api/stories/:id/probability` | 对已保存剧情做结局概率推演 |
 | `POST` | `/api/stories/:id/baseline` | 把请求体中的剧情分析结果保存为基线（同时落盘剧情），返回 `{ story, baseline, analysis }` |
 | `POST` | `/api/stories/:id/baseline/compare` | 基线对比；请求体可省略（对比已保存剧情）或传入编辑中的草稿，返回 `{ summary, items }` |
 | `DELETE` | `/api/stories/:id/baseline` | 删除基线（剧情内容不变） |
@@ -207,14 +224,16 @@ npm start
 
 ```
 .
-├── server.js              # Express 入口与 REST API（含基线、目标路径查询接口）
+├── server.js              # Express 入口与 REST API（含基线、目标路径查询、结局概率推演接口）
 ├── src/
 │   ├── expression.js      # 布尔表达式递归下降解析器 / 求值 / 失败解释
 │   ├── analyzer.js        # 「场景+状态」BFS 传播去重分析引擎（附带问题指纹）
 │   ├── pathquery.js       # 目标路径查询：必经序号+场景+状态 BFS 求最短链 / 差异最少状态
+│   ├── probability.js     # 结局概率推演：状态图展开、SCC 分解、吸收概率精确求解
+│   ├── weight.js          # 选项正整数权重的统一校验（保存 / 导入 / 推演共用）
 │   ├── fingerprint.js     # 不依赖数组顺序的问题稳定指纹
 │   ├── baseline.js        # 基线快照构建与新增/已修复/仍存在/详情变化对比
-│   └── storage.js         # JSON 文件存储、首启播种、选项 UID 与基线持久化
+│   └── storage.js         # JSON 文件存储、首启播种、选项 UID / 权重与基线持久化
 ├── public/                # 原生 HTML / CSS / JavaScript 前端（无构建步骤）
 │   ├── index.html
 │   ├── styles.css
@@ -226,6 +245,7 @@ npm start
 │   ├── smoke.js           # 分析引擎自检（node test/smoke.js）
 │   ├── baseline.js        # 指纹 / 基线对比 / 持久化自检（node test/baseline.js）
 │   ├── pathquery.js       # 目标路径查询与 API 自检（node test/pathquery.js）
+│   ├── probability.js     # 结局概率推演核心算法与 API 自检（node test/probability.js）
 │   └── healthcheck.js     # 健康检查探针回归测试（node test/healthcheck.js）
 ├── Dockerfile
 └── docker-compose.yml
@@ -234,7 +254,7 @@ npm start
 自检：
 
 ```bash
-npm test          # 依次运行 smoke.js、baseline.js、pathquery.js 与 healthcheck.js
+npm test          # 依次运行 smoke.js、baseline.js、pathquery.js、probability.js 与 healthcheck.js
 ```
 
 ## 技术栈

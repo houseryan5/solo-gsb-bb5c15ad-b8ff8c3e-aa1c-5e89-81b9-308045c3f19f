@@ -154,6 +154,16 @@
         <div id="pqResult" class="pq-result"></div>
       </section>
 
+      <section id="probCard" class="card prob-card" hidden>
+        <div class="card-head">
+          <h2>结局概率推演</h2>
+          <button id="btnRunProb" class="btn btn-small btn-primary">推演结局概率</button>
+        </div>
+        <div class="prob-hint">按选项权重（缺省为 1）在「场景 + 变量状态」图上精确求解：每个状态仅对条件成立且目标可进入的选项按权重归一化，含环图直接解方程，不做步数截断。</div>
+        <div id="probStale" class="diff-stale" hidden>⚠ 剧情已修改，以下结果可能过期，请重新「推演结局概率」</div>
+        <div id="probResult" class="prob-result"></div>
+      </section>
+
       <section id="detailPanel" class="card detail-card" hidden>
         <div class="card-head">
           <h2 id="detailTitle">问题详情</h2>
